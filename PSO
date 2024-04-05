@@ -1,0 +1,192 @@
+import functools
+import numpy as np
+import sklearn.metrics
+import sklearn.datasets
+import sklearn.model_selection
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow import keras
+
+from pyswarm import pso
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+# Path of dataset
+dataset_path = 'C:\\path\\to\\your\\dataset\\folder\\flowers'
+
+# Adjust the batch size to a smaller number since you have few images
+batch_size = min(6, max(1, int((15 * 5) * 0.8 / 5)))  # Example calculation
+
+# Instantiate the ImageDataGenerator
+train_datagen = ImageDataGenerator(
+    rescale=1./255, # Normalize pixel values
+    validation_split=0.2, # Splitting data: 80% for training, 20% for validation
+    rotation_range=40,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
+target_size = (150, 150)  # Be aware that this will distort aspect ratios
+
+train_generator = train_datagen.flow_from_directory(
+    dataset_path,
+    target_size=target_size,
+    batch_size=batch_size,  # Adjusted batch size
+    class_mode='categorical',
+    subset='training' # Set as training data
+)
+
+validation_generator = train_datagen.flow_from_directory(
+    dataset_path,
+    target_size=target_size,
+    batch_size=batch_size,  # Adjusted batch size
+    class_mode='categorical',
+    subset='validation' # Set as validation data
+)
+model = Sequential([
+    # Convolutional layer
+    Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+    MaxPooling2D(2, 2),
+    # Another convolutional layer
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D(2, 2),
+    # Another convolutional layer
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D(2, 2),
+    # Flatten the results to feed into a DNN
+    Flatten(),
+    # 512 neuron hidden layer
+    Dense(512, activation='relu'),
+    # Dropout layer to reduce overfitting
+    Dropout(0.5),
+    # Output layer with a single neuron and sigmoid activation
+    # Adjust the units parameter according to the number of classes
+    Dense(5, activation='softmax')  # Assuming 5 classes for flower recognition
+])
+
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+# Define a grid of hyperparameters
+learning_rates = [0.001, 0.0001]
+num_filters_list = [32, 64]
+
+# This will store the best performance
+best_accuracy = 0
+best_hyperparameters = None
+from pyswarm import pso
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.optimizers import Adam
+
+def create_model(num_filters, learning_rate):
+    model = Sequential([
+        Conv2D(int(num_filters), (3, 3), activation='relu', input_shape=(150, 150, 3)),
+        MaxPooling2D(2, 2),
+        Flatten(),
+        Dense(5, activation='softmax')  # Assuming 5 classes for flower recognition
+    ])
+    model.compile(optimizer=Adam(learning_rate=learning_rate),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+    return model
+
+def cnn_fitness_function(hyperparameters, train_generator, validation_generator):
+    learning_rate, num_filters = hyperparameters
+    model = create_model(num_filters, learning_rate)
+    steps_per_epoch = max(1, train_generator.samples // train_generator.batch_size)
+    validation_steps = max(1, validation_generator.samples // validation_generator.batch_size)
+
+    history = model.fit(
+        train_generator,
+        steps_per_epoch=steps_per_epoch,
+        epochs=1,
+        validation_data=validation_generator,
+        validation_steps=validation_steps,
+        verbose=0
+    )
+    final_val_loss = history.history['val_loss'][-1]
+    return final_val_loss
+
+# Define bounds for hyperparameters to be optimized
+lb = [0.0001, 16]  # Lower bounds for learning rate and number of filters
+ub = [0.01, 64]    # Upper bounds for learning rate and number of filters
+
+# Optimize using PSO
+best_hyperparameters, best_val_loss = pso(
+    functools.partial(cnn_fitness_function, train_generator=train_generator, validation_generator=validation_generator),
+    lb, ub, swarmsize=10, maxiter=10
+)
+
+print(f"Optimal learning rate: {best_hyperparameters[0]}")
+print(f"Optimal number of filters: {int(best_hyperparameters[1])}")
+print(f"Optimal validation loss: {best_val_loss}")
+for learning_rate in learning_rates:
+    for num_filters in num_filters_list:
+        # Define the CNN model with the current set of hyperparameters
+        model = Sequential([
+            Conv2D(num_filters, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+            MaxPooling2D(2, 2),
+            Conv2D(num_filters * 2, (3, 3), activation='relu'),
+            MaxPooling2D(2, 2),
+            Flatten(),
+            Dense(512, activation='relu'),
+            Dense(5, activation='softmax')  # Assuming 5 classes for flower recognition
+        ])
+        
+        # Compile the model
+        model.compile(optimizer=Adam(learning_rate=learning_rate),
+                      loss='categorical_crossentropy',
+                      metrics=['accuracy'])
+        
+        # Train the model
+        history = model.fit(
+            train_generator,
+            steps_per_epoch=train_generator.samples // train_generator.batch_size,
+            epochs=5,  # Reduced for faster computation
+            validation_data=validation_generator,
+            validation_steps=validation_generator.samples // validation_generator.batch_size,
+            verbose=1
+        )
+        
+        # Evaluate the model's performance
+        final_val_accuracy = history.history['val_accuracy'][-1]
+        
+        # Update the best performance
+        if final_val_accuracy > best_accuracy:
+            best_accuracy = final_val_accuracy
+            best_hyperparameters = (learning_rate, num_filters)
+            # Optionally, save the model's weights
+            model.save('best_baseline_model.h5')
+
+# Print the best performance and hyperparameters
+print(f"Best validation accuracy: {best_accuracy}")
+print(f"Best hyperparameters - Learning rate: {best_hyperparameters[0]}, Number of filters: {best_hyperparameters[1]}")
+
+from scipy import stats
+
+# Replace these with actual accuracy data
+# For example, let's say these are the accuracies from 5 different tests
+accuracies_pso = [0.90, 0.92, 0.91, 0.93, 0.94]  # Replace with your actual data
+accuracies_traditional = [0.85, 0.86, 0.87, 0.88, 0.89]  # Replace with your actual data
+
+# Perform a t-test to compare the two sets of results
+t_stat, p_val = stats.ttest_ind(accuracies_pso, accuracies_traditional)
+
+print(f'T-statistic: {t_stat}, P-value: {p_val}')
+
+import matplotlib.pyplot as plt
+
+# Example to plot accuracies
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Model Accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Epoch')
+plt.legend(loc='upper left')
+plt.show()
